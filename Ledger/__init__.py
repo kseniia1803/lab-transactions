@@ -3,7 +3,7 @@ from sqlalchemy.sql import text
 import os
 import logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format=f'%(asctime)s.%(msecs)03d - {os.getpid()} - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
 )
@@ -31,7 +31,8 @@ class Ledger:
         sql = text('SELECT account_id FROM accounts;')
         logging.debug(sql)
         results = self.connection.execute(sql)
-        return [row[0] for row in results.all()]
+        return [row[0] for row in results.all()] 
+
 
     def create_account(self, name):
         '''
@@ -62,7 +63,18 @@ class Ledger:
             logging.debug(sql)
             self.connection.execute(sql)
 
-    def transfer_funds(
+    def transfer_funds(self, debit_account_id, credit_account_id, amount):    
+        '''                                                                    
+        Retries the transfer until it succeeds, in case of a deadlock.        
+        '''                                                                     
+        while True:                                                             
+            try:                                                                
+                self._transfer_funds_once(debit_account_id, credit_account_id, amount)  
+                return                                                          
+            except sqlalchemy.exc.OperationalError as e:                        
+                logging.warning(f'deadlock, retrying: {e}')
+
+    def _transfer_funds_once(
             self,
             debit_account_id,
             credit_account_id,
@@ -89,15 +101,15 @@ class Ledger:
         self.connection.rollback()  # Close earlier implicit transaction
 
         with self.connection.begin():
-            sql = text('LOCK TABLE balances IN ACCESS EXCLUSIVE MODE;')
-            logging.debug(sql)
-            self.connection.execute(sql)            # insert the transaction
+            #sql = text('LOCK TABLE balances IN ACCESS EXCLUSIVE MODE;')
+            #logging.debug(sql)
+            #self.connection.execute(sql)            # insert the transaction
             sql = text(f'INSERT INTO transactions (debit_account_id, credit_account_id, amount) VALUES ({debit_account_id}, {credit_account_id}, {amount});')
             logging.debug(sql)
             self.connection.execute(sql)
 
             # update the debit account balance
-            sql = text(f'SELECT balance FROM balances WHERE account_id = {debit_account_id};')
+            sql = text(f'SELECT balance FROM balances WHERE account_id = {debit_account_id} FOR UPDATE;')
             logging.debug(sql)
             results = self.connection.execute(sql)
             debit_account_balance = results.first()[0]
@@ -109,7 +121,7 @@ class Ledger:
 
 
             # update the credit account balance
-            sql = text(f'SELECT balance FROM balances WHERE account_id = {credit_account_id};')
+            sql = text(f'SELECT balance FROM balances WHERE account_id = {credit_account_id} FOR UPDATE;')
             logging.debug(sql)
             results = self.connection.execute(sql)
             credit_account_balance = results.first()[0]

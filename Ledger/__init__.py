@@ -86,12 +86,15 @@ class Ledger:
         2. This code uses f-strings instead of bind parameters.
             This can result in SQL injection vulnerabilities.
         '''
+        self.connection.rollback()  # Close earlier implicit transaction
+
         with self.connection.begin():
-            # insert the transaction
+            sql = text('LOCK TABLE balances IN ACCESS EXCLUSIVE MODE;')
+            logging.debug(sql)
+            self.connection.execute(sql)            # insert the transaction
             sql = text(f'INSERT INTO transactions (debit_account_id, credit_account_id, amount) VALUES ({debit_account_id}, {credit_account_id}, {amount});')
             logging.debug(sql)
             self.connection.execute(sql)
-            self.connection.commit()
 
             # update the debit account balance
             sql = text(f'SELECT balance FROM balances WHERE account_id = {debit_account_id};')
@@ -103,7 +106,7 @@ class Ledger:
             sql = text(f'UPDATE balances SET balance={debit_new_balance} WHERE account_id = {debit_account_id};')
             logging.debug(sql)
             self.connection.execute(sql)
-            self.connection.commit()
+
 
             # update the credit account balance
             sql = text(f'SELECT balance FROM balances WHERE account_id = {credit_account_id};')
@@ -116,4 +119,4 @@ class Ledger:
             sql = text(f'UPDATE balances SET balance={credit_new_balance} WHERE account_id = {credit_account_id};')
             logging.debug(sql)
             self.connection.execute(sql)
-            self.connection.commit()
+
